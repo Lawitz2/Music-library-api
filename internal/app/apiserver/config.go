@@ -6,14 +6,14 @@ import (
 )
 
 type Config struct {
-	BindAddr string
+	BindPort string
 	LogLevel string
 	Database *db.Config
 }
 
 func NewConfig() *Config {
 	return &Config{
-		BindAddr: os.Getenv("BIND_PORT"),
+		BindPort: os.Getenv("BIND_PORT"),
 		LogLevel: os.Getenv("LOG_LEVEL"),
 		Database: db.NewConfig(),
 	}

@@ -6,6 +6,8 @@ import (
 	"github.com/joho/godotenv"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 )
 
 var envPath string
@@ -39,6 +41,12 @@ func main() {
 	slog.SetLogLoggerLevel(level)
 
 	config := apiserver.NewConfig()
+
+	go func() {
+		sigchan := make(chan os.Signal, 1)
+		signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigchan
+	}()
 
 	server := apiserver.NewAPIServer(config)
 	if err = server.Start(); err != nil {

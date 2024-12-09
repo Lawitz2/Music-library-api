@@ -2,13 +2,16 @@ package apiserver
 
 import (
 	"ApiServer/internal/app/db"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gorilla/mux"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -18,12 +21,16 @@ type APIServer struct {
 	config   *Config
 	router   *mux.Router
 	database *db.Database
+	server   *http.Server
 }
 
 func NewAPIServer(config *Config) *APIServer {
 	return &APIServer{
 		config: config,
 		router: mux.NewRouter(),
+		server: &http.Server{
+			Addr: config.BindPort,
+		},
 	}
 }
 
@@ -31,21 +38,41 @@ func (s *APIServer) Start() error {
 	slog.Debug("debug is enabled")
 
 	s.configureRouter()
+	s.server.Handler = s.router
 
 	err := s.configureDB()
 	if err != nil {
 		return err
 	}
 
+	idleConnsClosed := make(chan struct{})
+
+	// горутина для перехвата SIGINT и нормального завершения работы сервера
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt)
+		<-sigint
+
+		ctxTO, cancel := context.WithTimeout(context.Background(), time.Second*15)
+		defer cancel()
+		if err := s.server.Shutdown(ctxTO); err != nil {
+			slog.Error("HTTP server Shutdown", "error", err.Error())
+		}
+		close(idleConnsClosed)
+	}()
+
 	slog.Info("starting api server")
+	slog.Debug("server data", "port", s.config.BindPort)
 
-	return http.ListenAndServe(s.config.BindAddr, s.router)
-}
+	if err := s.server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		slog.Error("error starting or closing listener", "error", err.Error())
+		return err
+	}
 
-func parseLevel(s string) (slog.Level, error) {
-	var level slog.Level
-	err := level.UnmarshalText([]byte(s))
-	return level, err
+	<-idleConnsClosed
+
+	slog.Info("api server stopped gracefully")
+	return nil
 }
 
 func (s *APIServer) configureRouter() {
@@ -104,9 +131,7 @@ func (s *APIServer) listLibrary() http.HandlerFunc {
 			return
 		} else {
 			encoder := json.NewEncoder(writer)
-			for _, val := range lib {
-				encoder.Encode(val)
-			}
+			encoder.Encode(lib)
 		}
 	}
 }
@@ -116,6 +141,11 @@ func (s *APIServer) deleteSong() http.HandlerFunc {
 
 	return func(writer http.ResponseWriter, request *http.Request) {
 		slog.Info("delete song request", "from", request.RemoteAddr, "to", request.Host+request.URL.String())
+
+		author = request.FormValue("author")
+		song = request.FormValue("song")
+		slog.Debug("delete request", "author", author, "song", song)
+
 		// необходимы оба поля author и song для точного определения песни,
 		// которую необходимо удалить
 		if author == "" || song == "" {
@@ -124,14 +154,14 @@ func (s *APIServer) deleteSong() http.HandlerFunc {
 			return
 		}
 
-		author = request.FormValue("author")
-		song = request.FormValue("song")
-		slog.Debug("delete request", "author", author, "song", song)
-
-		err := s.database.DeleteSong(author, song)
+		dbresp, err := s.database.DeleteSong(author, song)
 		if err != nil {
 			slog.Error("error deleting from database", "error", err.Error())
 			writer.WriteHeader(500)
+		}
+		if dbresp == "DELETE 0" {
+			writer.WriteHeader(404)
+			return
 		}
 	}
 }
@@ -203,9 +233,9 @@ func (s *APIServer) addSong() http.HandlerFunc {
 	externalUrl := os.Getenv("EXTERNAL_API_URL")
 
 	return func(writer http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
 		slog.Info("add song request", "from", request.RemoteAddr, "to", request.Host+request.URL.String())
 		body, err = io.ReadAll(request.Body)
-		defer request.Body.Close()
 		if err != nil {
 			slog.Error("error reading request body", "error", err.Error())
 			writer.WriteHeader(400)
@@ -233,7 +263,7 @@ func (s *APIServer) addSong() http.HandlerFunc {
 			if err != nil {
 				writer.WriteHeader(500)
 				slog.Error("http.get error", "error", err.Error())
-				fmt.Fprint(writer, err.Error())
+				fmt.Fprint(writer, "error trying to access external api: "+err.Error())
 				return
 			}
 			switch resp.StatusCode {
@@ -254,6 +284,8 @@ func (s *APIServer) addSong() http.HandlerFunc {
 				return
 			}
 		}
+
+		defer resp.Body.Close()
 
 		slog.Debug("response from external api", "resp code", resp.StatusCode)
 
@@ -288,6 +320,7 @@ func (s *APIServer) updateSong() http.HandlerFunc {
 	var body []byte
 	var err error
 	return func(writer http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
 		slog.Info("update song request", "from", request.RemoteAddr, "to", request.Host+request.URL.String())
 		song.Group = request.FormValue("author")
 		song.Name = request.FormValue("song")

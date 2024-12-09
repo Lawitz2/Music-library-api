@@ -167,14 +167,15 @@ func (db *Database) ListAllLibrary(fp Song, offset, limit string) (Library, erro
 	return lib, nil
 }
 
-func (db *Database) DeleteSong(author, songName string) error {
+func (db *Database) DeleteSong(author, songName string) (string, error) {
 	tag, err := db.dbConn.Exec(context.Background(), `delete from music_library where (
     author, song) = ($1, $2)`, author, songName)
 	slog.Debug("deleting from DB", "db response", tag.String())
 	if err != nil {
-		return err
+		return "", err
 	}
-	return nil
+
+	return tag.String(), nil
 }
 
 func (db *Database) AddSong(s Song) error {

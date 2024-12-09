@@ -56,7 +56,7 @@ paths:
           description: bad request
         500:
           description: Internal server error
-  /library/addSong:
+  /library/add:
     post:
       requestBody:
         required: true
