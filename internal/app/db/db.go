@@ -63,7 +63,6 @@ func (db *Database) Open() error {
 
 func (db *Database) Close() {
 	db.Close()
-	return
 }
 
 func createDB(dbConn *pgxpool.Pool, dbname string) error {
