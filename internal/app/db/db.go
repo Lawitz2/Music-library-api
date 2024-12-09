@@ -2,12 +2,12 @@ package db
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Song struct {
@@ -41,14 +41,11 @@ func (db *Database) Open() error {
 
 	err = dbConn.Ping(context.Background())
 	if err != nil {
-		if strings.Contains(err.Error(), `database "`+db.config.DbName+`" does not exist`) {
-			err := createDB(dbConn, db.config.DbName)
-			if err != nil {
-				return err
-			}
-		} else {
-			return err
+		if strings.Contains(err.Error(), `database "`+db.config.DBName+`" does not exist`) {
+			// подразумеваем, что база данных создана администратором СУБД,
+			// имеющим соответствующие привилегии
 		}
+		return err
 	}
 
 	db.dbConn = dbConn
@@ -61,18 +58,7 @@ func (db *Database) Open() error {
 	return nil
 }
 
-func (db *Database) Close() {
-	db.Close()
-}
-
-func createDB(dbConn *pgxpool.Pool, dbname string) error {
-	// подразумеваем, что база данных создана администратором СУБД,
-	// имеющим соответствующие привилегии
-	return errors.New("database doesn't exist")
-}
-
 func (db *Database) migrateToCurrentVersion() error {
-
 	const queryCreateTable = `drop table if exists music_library;
 create table music_library (
 author varchar(40),

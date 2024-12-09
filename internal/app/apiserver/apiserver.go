@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/mux"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 type APIServer struct {
@@ -29,7 +30,9 @@ func NewAPIServer(config *Config) *APIServer {
 		config: config,
 		router: mux.NewRouter(),
 		server: &http.Server{
-			Addr: config.BindPort,
+			Addr:         config.BindPort,
+			ReadTimeout:  time.Second * 15,
+			WriteTimeout: time.Second * 15,
 		},
 	}
 }
@@ -98,7 +101,7 @@ func (s *APIServer) configureDB() error {
 
 // функция парсит параметры запроса и выдаёт отфильтрованный
 // на их основе лист песен
-// если параметр не указан - фильтрация по нему не происходит
+// если параметр не указан - фильтрация по нему не происходит.
 func (s *APIServer) listLibrary() http.HandlerFunc {
 	var lib db.Library
 	var filterParams db.Song
@@ -127,12 +130,11 @@ func (s *APIServer) listLibrary() http.HandlerFunc {
 
 		if len(lib) == 0 {
 			writer.WriteHeader(404)
-			slog.Debug("song not found", "provided url", request.URL)
+			slog.Debug("song not found", "provided URL", request.URL)
 			return
-		} else {
-			encoder := json.NewEncoder(writer)
-			encoder.Encode(lib)
 		}
+		encoder := json.NewEncoder(writer)
+		encoder.Encode(lib)
 	}
 }
 
@@ -140,7 +142,8 @@ func (s *APIServer) deleteSong() http.HandlerFunc {
 	var author, song string
 
 	return func(writer http.ResponseWriter, request *http.Request) {
-		slog.Info("delete song request", "from", request.RemoteAddr, "to", request.Host+request.URL.String())
+		slog.Info("delete song request", "from", request.RemoteAddr,
+			"to", request.Host+request.URL.String())
 
 		author = request.FormValue("author")
 		song = request.FormValue("song")
@@ -149,7 +152,8 @@ func (s *APIServer) deleteSong() http.HandlerFunc {
 		// необходимы оба поля author и song для точного определения песни,
 		// которую необходимо удалить
 		if author == "" || song == "" {
-			slog.Error("bad request, author and/or name of the song weren't provided", "request", request.Host+request.URL.String())
+			slog.Error("bad request, author and/or name of the song weren't provided",
+				"request", request.Host+request.URL.String())
 			writer.WriteHeader(400)
 			return
 		}
@@ -181,7 +185,8 @@ func (s *APIServer) showSongText() http.HandlerFunc {
 		// необходимы оба поля author и song для точного определения песни,
 		// текст которой необходимо показать
 		if author == "" || song == "" {
-			slog.Error("bad request, author and/or name of the song weren't provided", "request", request.Host+request.URL.String())
+			slog.Error("bad request, author and/or name of the song weren't provided",
+				"request", request.Host+request.URL.String())
 			writer.WriteHeader(400)
 			return
 		}
@@ -203,23 +208,23 @@ func (s *APIServer) showSongText() http.HandlerFunc {
 		// куплетов в песне = bad request
 		if verse == "" {
 			fmt.Fprint(writer, text)
+			return
+		}
+		verseInt, err := strconv.Atoi(verse)
+		if err != nil {
+			slog.Error(err.Error())
+			writer.WriteHeader(400)
+			return
+		}
+		if verseInt > len(tmp) || verseInt < 0 {
+			slog.Error("bad request", "verse", verseInt)
+			writer.WriteHeader(400)
+			return
+		}
+		if verseInt == 0 {
+			fmt.Fprint(writer, text)
 		} else {
-			verseInt, err := strconv.Atoi(verse)
-			if err != nil {
-				slog.Error(err.Error())
-				writer.WriteHeader(400)
-				return
-			}
-			if verseInt > len(tmp) || verseInt < 0 {
-				slog.Error("bad request", "verse", verseInt)
-				writer.WriteHeader(400)
-				return
-			}
-			if verseInt == 0 {
-				fmt.Fprint(writer, text)
-			} else {
-				fmt.Fprint(writer, tmp[verseInt-1])
-			}
+			fmt.Fprint(writer, tmp[verseInt-1])
 		}
 	}
 }
@@ -230,7 +235,7 @@ func (s *APIServer) addSong() http.HandlerFunc {
 	var err error
 	var reqURL string
 	var resp *http.Response
-	externalUrl := os.Getenv("EXTERNAL_API_URL")
+	externalURL := os.Getenv("EXTERNAL_API_URL")
 
 	return func(writer http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
@@ -250,8 +255,8 @@ func (s *APIServer) addSong() http.HandlerFunc {
 		}
 		slog.Debug("request body", "struct", song)
 
-		reqURL = fmt.Sprintf("%s?group=%s&song=%s", externalUrl, song.Group, song.Name)
-		slog.Debug("accessing external api", "url", reqURL)
+		reqURL = fmt.Sprintf("%s?group=%s&song=%s", externalURL, song.Group, song.Name)
+		slog.Debug("accessing external api", "URL", reqURL)
 		timer := time.Second
 
 		// повторяем запрос вплоть до 5 раз в случае получения кода 500
@@ -264,8 +269,10 @@ func (s *APIServer) addSong() http.HandlerFunc {
 				writer.WriteHeader(500)
 				slog.Error("http.get error", "error", err.Error())
 				fmt.Fprint(writer, "error trying to access external api: "+err.Error())
+				resp.Body.Close()
 				return
 			}
+			defer resp.Body.Close()
 			switch resp.StatusCode {
 			case 400:
 				slog.Error("received code 400, bad request")
@@ -321,14 +328,16 @@ func (s *APIServer) updateSong() http.HandlerFunc {
 	var err error
 	return func(writer http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
-		slog.Info("update song request", "from", request.RemoteAddr, "to", request.Host+request.URL.String())
+		slog.Info("update song request", "from", request.RemoteAddr,
+			"to", request.Host+request.URL.String())
 		song.Group = request.FormValue("author")
 		song.Name = request.FormValue("song")
 
 		// необходимы оба поля author и song для точного определения песни,
 		// данные которой необходимо обновить
 		if song.Group == "" || song.Name == "" {
-			slog.Error("bad request, author and/or name of the song weren't provided", "request", request.Host+request.URL.String())
+			slog.Error("bad request, author and/or name of the song weren't provided",
+				"request", request.Host+request.URL.String())
 			writer.WriteHeader(400)
 			return
 		}

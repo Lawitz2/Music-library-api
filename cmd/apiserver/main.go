@@ -3,15 +3,18 @@ package main
 import (
 	"ApiServer/internal/app/apiserver"
 	"flag"
-	"github.com/joho/godotenv"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/joho/godotenv"
 )
 
-var envPath string
-var debug bool
+var (
+	envPath string
+	debug   bool
+)
 
 func init() {
 	flag.StringVar(&envPath, "p", `env\.env`, "Location of environment file")
